@@ -33,6 +33,7 @@ import expressProxy from 'express-http-proxy';
 import Store from 'electron-store';
 import { createMpris, createDbus } from '@/electron/mpris';
 import { spawn } from 'child_process';
+import path from 'path';
 const clc = require('cli-color');
 const log = text => {
   console.log(`${clc.blueBright('[background.js]')} ${text}`);
@@ -189,10 +190,10 @@ class Background {
       title: 'MyMusic',
       show: false,
       webPreferences: {
-        webSecurity: false,
-        nodeIntegration: true,
-        enableRemoteModule: true,
-        contextIsolation: false,
+        preload: path.join(__dirname, 'preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
       },
       backgroundColor:
         ((appearance === undefined || appearance === 'auto') &&
@@ -281,9 +282,7 @@ class Background {
         })
         .then(result => {
           if (result.response === 0) {
-            shell.openExternal(
-              'https://github.com/LINKKDON/MyMusic/releases'
-            );
+            shell.openExternal('https://github.com/LINKKDON/MyMusic/releases');
           }
         });
     };
@@ -341,28 +340,27 @@ class Background {
       this.window.webContents.send('isMaximized', false);
     });
 
-    this.window.webContents.on('new-window', function (e, url) {
-      e.preventDefault();
-      log('open url');
-      const excludeHosts = ['www.last.fm'];
-      const exclude = excludeHosts.find(host => url.includes(host));
-      if (exclude) {
-        const newWindow = new BrowserWindow({
-          width: 800,
-          height: 600,
-          titleBarStyle: 'default',
-          title: 'MyMusic',
-          webPreferences: {
-            webSecurity: false,
-            nodeIntegration: true,
-            enableRemoteModule: true,
-            contextIsolation: false,
+    this.window.webContents.setWindowOpenHandler(({ url }) => {
+      const hostname = new URL(url).hostname;
+      if (hostname === 'www.last.fm') {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 800,
+            height: 600,
+            titleBarStyle: 'default',
+            title: 'MyMusic',
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              sandbox: true,
+            },
           },
-        });
-        newWindow.loadURL(url);
-        return;
+        };
       }
+
       shell.openExternal(url);
+      return { action: 'deny' };
     });
   }
 
@@ -477,7 +475,7 @@ class Background {
     });
 
     if (!isMac) {
-      app.on('second-instance', (e, cl, wd) => {
+      app.on('second-instance', () => {
         if (this.window) {
           this.window.show();
           if (this.window.isMinimized()) {

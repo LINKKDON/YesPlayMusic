@@ -74,10 +74,8 @@ const UNPLAYABLE_CONDITION = {
   DO_NOTHING: 'doNothing',
 };
 
-const electron =
-  process.env.IS_ELECTRON === true ? window.require('electron') : null;
 const ipcRenderer =
-  process.env.IS_ELECTRON === true ? electron.ipcRenderer : null;
+  process.env.IS_ELECTRON === true ? window.electronAPI : null;
 const delay = ms =>
   new Promise(resolve => {
     setTimeout(() => {

@@ -615,10 +615,8 @@ import { changeAppearance, bytesToSize } from '@/utils/common';
 import { countDBSize, clearDB } from '@/utils/db';
 import pkg from '../../package.json';
 
-const electron =
-  process.env.IS_ELECTRON === true ? window.require('electron') : null;
 const ipcRenderer =
-  process.env.IS_ELECTRON === true ? electron.ipcRenderer : null;
+  process.env.IS_ELECTRON === true ? window.electronAPI : null;
 
 const validShortcutCodes = ['=', '-', '~', '[', ']', ';', "'", ',', '.', '/'];
 

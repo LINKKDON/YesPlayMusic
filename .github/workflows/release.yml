@@ -32,7 +32,7 @@ jobs:
       - name: Install Node.js, NPM and Yarn
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'yarn'
 
       - name: Install RPM & Pacman (on Ubuntu)
@@ -47,8 +47,11 @@ jobs:
         uses: samuelmeuli/action-snapcraft@v3
         if: startsWith(matrix.os, 'ubuntu')
 
+      - name: Enable Corepack
+        run: corepack enable
+
       - name: Install dependencies
-        run: yarn --ignore-optional --network-timeout 100000
+        run: yarn --frozen-lockfile --network-timeout 100000
 
       - id: get_unm_version
         name: Get the installed UNM version

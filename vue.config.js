@@ -87,7 +87,8 @@ module.exports = {
   pluginOptions: {
     // electron-builder的配置文件
     electronBuilder: {
-      nodeIntegration: true,
+      nodeIntegration: false,
+      preload: 'src/preload.js',
       builderOptions: {
         productName: 'MyMusic',
         copyright: 'Copyright © MyMusic',
@@ -127,9 +128,7 @@ module.exports = {
               arch: ['x64'],
             },
           ],
-          publisherName: 'MyMusic',
           icon: 'build/icons/icon.ico',
-          publish: ['github'],
         },
         linux: {
           target: [

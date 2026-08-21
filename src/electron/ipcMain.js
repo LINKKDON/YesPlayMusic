@@ -73,6 +73,12 @@ const exitAskWithoutMac = (e, win) => {
 const client = require('discord-rich-presence')('818936529484906596');
 
 export function initIpcMain(win, store, trayEventEmitter) {
+  ipcMain.on('showMessageBox', (_event, message) => {
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      message,
+    });
+  });
   ipcMain.on('close', e => {
     if (isMac) {
       win.hide();
