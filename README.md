@@ -109,7 +109,7 @@ yarn serve
   <br>
   API: <a href="https://github.com/Binaryify/NeteaseCloudMusicApi">NeteaseCloudMusicApi</a>
   <br>
-  第三方 API: <a href="https://music.gdstudio.xyz">gdstudio</a>
+  第三方 API: <a href="https://music.gdstudio.xyz">Gdstudio</a>
   <br>
   设计灵感: Apple Music • YouTube Music • Spotify
 </p>
