@@ -1,0 +1,52 @@
+name: Web Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web-build:
+    name: Build Web
+    runs-on: ubuntu-latest
+    env:
+      # The repository still contains Electron dependencies at this revision,
+      # but this Web-only workflow must never download or package Electron.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines --ignore-scripts --non-interactive
+
+      - name: Build Web application
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
+          VUE_APP_NETEASE_API_URL: /api
+        run: yarn build
+
+      - name: Upload Web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyMusic-web
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
