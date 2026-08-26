@@ -3,7 +3,12 @@
     <div class="container">
       <div v-if="showUserInfo" class="user">
         <div class="left">
-          <img class="avatar" :src="data.user.avatarUrl" loading="lazy" />
+          <img
+            class="avatar"
+            :src="data.user.avatarUrl"
+            loading="lazy"
+            @click.stop="handleSettingsAvatarClick"
+          />
           <div class="info">
             <div class="nickname">
               <span>{{ data.user.nickname }}</span>
@@ -619,7 +624,10 @@
 import { mapState, mapActions } from 'vuex';
 import { isAccountLoggedIn, isLooseLoggedIn, doLogout } from '@/utils/auth';
 import { auth as lastfmAuth } from '@/api/lastfm';
-import { getListeningRights } from '@/api/others';
+import {
+  claimListeningRights as requestListeningRights,
+  getListeningRights,
+} from '@/api/others';
 import { changeAppearance, bytesToSize } from '@/utils/common';
 import { countDBSize, clearDB } from '@/utils/db';
 import pkg from '../../package.json';
@@ -657,6 +665,9 @@ export default {
       },
       listeningRightsNow: Date.now(),
       listeningRightsTimer: null,
+      settingsAvatarClickCount: 0,
+      settingsAvatarClickTimer: null,
+      claimingListeningRights: false,
     };
   },
   computed: {
@@ -1091,6 +1102,7 @@ export default {
   },
   beforeDestroy() {
     clearInterval(this.listeningRightsTimer);
+    clearTimeout(this.settingsAvatarClickTimer);
     window.removeEventListener(
       'listening-rights-updated',
       this.handleListeningRightsUpdated
@@ -1103,6 +1115,39 @@ export default {
   },
   methods: {
     ...mapActions(['showToast']),
+    handleSettingsAvatarClick() {
+      this.settingsAvatarClickCount += 1;
+      clearTimeout(this.settingsAvatarClickTimer);
+      if (this.settingsAvatarClickCount >= 3) {
+        this.settingsAvatarClickCount = 0;
+        this.settingsAvatarClickTimer = null;
+        this.claimListeningRights();
+        return;
+      }
+      this.settingsAvatarClickTimer = setTimeout(() => {
+        this.settingsAvatarClickCount = 0;
+        this.settingsAvatarClickTimer = null;
+      }, 500);
+    },
+    async claimListeningRights() {
+      if (this.claimingListeningRights) return;
+      if (!isAccountLoggedIn()) {
+        this.showToast('领取权益需要登录网易云账号');
+        return;
+      }
+      this.claimingListeningRights = true;
+      try {
+        await requestListeningRights();
+        this.showToast('权益领取请求已提交');
+        await this.refreshListeningRights({ silent: true });
+      } catch (error) {
+        this.showToast(
+          this.getListeningRightsErrorMessage(error, '权益领取失败')
+        );
+      } finally {
+        this.claimingListeningRights = false;
+      }
+    },
     handleListeningRightsUpdated() {
       this.refreshListeningRights({ silent: true });
     },
