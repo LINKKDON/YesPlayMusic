@@ -672,7 +672,6 @@ export default {
       settingsAvatarClickCount: 0,
       settingsAvatarClickTimer: null,
       claimingListeningRights: false,
-      lastListeningRightsClaimAt: 0,
       avatarClicking: false,
       avatarClickFeedbackTimer: null,
     };
@@ -1186,28 +1185,6 @@ export default {
           this.showToast('当前 API 上游暂不支持免费听权益');
           return;
         }
-        if (this.hasListeningRightsRemaining) {
-          this.showToast('当前免费听权益仍有剩余时长');
-          return;
-        }
-        if (
-          this.listeningRights.coverToday ||
-          this.listeningRights.upperLimit
-        ) {
-          this.showToast(
-            this.listeningRights.upperLimit
-              ? '免费听权益已达到领取上限'
-              : '今日免费听权益已领取'
-          );
-          return;
-        }
-
-        const claimCooldown = 30 * 1000;
-        if (Date.now() - this.lastListeningRightsClaimAt < claimCooldown) {
-          this.showToast('权益状态正在同步，请稍后再试');
-          return;
-        }
-        this.lastListeningRightsClaimAt = Date.now();
         const previousRemainingTime = this.listeningRights.remainingTime;
         const result = await requestListeningRights();
         if (result?.code !== 200 || this.isListeningRightsGainFailure(result)) {
@@ -1231,11 +1208,7 @@ export default {
             setTimeout(resolve, attempt === 0 ? 300 : 900)
           );
           await this.refreshListeningRights({ silent: true });
-          if (
-            this.listeningRights.remainingTime > previousRemainingTime ||
-            this.listeningRights.coverToday ||
-            this.listeningRights.upperLimit
-          ) {
+          if (this.listeningRights.remainingTime > previousRemainingTime) {
             refreshed = true;
             break;
           }
@@ -1246,10 +1219,6 @@ export default {
           this.listeningRights.remainingTime > previousRemainingTime
         ) {
           this.showToast('免费听权益领取成功');
-        } else if (this.listeningRights.coverToday) {
-          this.showToast('今日免费听权益已领取');
-        } else if (this.listeningRights.upperLimit) {
-          this.showToast('免费听权益已达到领取上限');
         } else {
           this.showToast('权益领取未确认生效，请稍后再试');
         }
