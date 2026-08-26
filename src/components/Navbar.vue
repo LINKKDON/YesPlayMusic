@@ -46,7 +46,7 @@
         <img
           class="avatar"
           :src="avatarUrl"
-          @click="showUserProfileMenu"
+          @click="handleAvatarClick"
           loading="lazy"
         />
       </div>
@@ -70,8 +70,8 @@
 </template>
 
 <script>
-import { mapState } from 'vuex';
-import { isLooseLoggedIn, doLogout } from '@/utils/auth';
+import { mapState, mapActions } from 'vuex';
+import { isAccountLoggedIn, isLooseLoggedIn, doLogout } from '@/utils/auth';
 
 // import icons for win32 title bar
 // icons by https://github.com/microsoft/vscode-codicons
@@ -81,6 +81,7 @@ import Win32Titlebar from '@/components/Win32Titlebar.vue';
 import LinuxTitlebar from '@/components/LinuxTitlebar.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
 import ButtonIcon from '@/components/ButtonIcon.vue';
+import { claimListeningRights as requestListeningRights } from '@/api/others';
 
 export default {
   name: 'Navbar',
@@ -97,6 +98,9 @@ export default {
       keywords: '',
       enableWin32Titlebar: false,
       enableLinuxTitlebar: false,
+      avatarClickCount: 0,
+      avatarClickTimer: null,
+      claimingListeningRights: false,
     };
   },
   computed: {
@@ -123,7 +127,59 @@ export default {
       this.enableLinuxTitlebar = true;
     }
   },
+  beforeDestroy() {
+    clearTimeout(this.avatarClickTimer);
+  },
   methods: {
+    ...mapActions(['showToast']),
+    handleAvatarClick(event) {
+      if (!isAccountLoggedIn()) {
+        this.showUserProfileMenu(event);
+        return;
+      }
+
+      this.avatarClickCount += 1;
+      if (this.avatarClickCount === 1) {
+        this.avatarClickTimer = setTimeout(() => {
+          this.showUserProfileMenu(event);
+          this.resetAvatarClickState();
+        }, 360);
+        return;
+      }
+
+      if (this.avatarClickCount >= 3) {
+        clearTimeout(this.avatarClickTimer);
+        this.resetAvatarClickState();
+        this.claimListeningRights();
+      }
+    },
+    resetAvatarClickState() {
+      this.avatarClickCount = 0;
+      this.avatarClickTimer = null;
+    },
+    getListeningRightsErrorMessage(error, fallback) {
+      return (
+        error?.response?.data?.message ||
+        error?.response?.data?.msg ||
+        error?.message ||
+        fallback
+      );
+    },
+    async claimListeningRights() {
+      if (this.claimingListeningRights) return;
+      this.claimingListeningRights = true;
+      try {
+        await requestListeningRights();
+        this.showToast('权益领取请求已提交');
+        window.dispatchEvent(new CustomEvent('listening-rights-updated'));
+      } catch (error) {
+        this.showToast(
+          this.getListeningRightsErrorMessage(error, '权益领取失败')
+        );
+      } finally {
+        this.claimingListeningRights = false;
+      }
+    },
     go(where) {
       if (where === 'back') this.$router.go(-1);
       else this.$router.go(1);

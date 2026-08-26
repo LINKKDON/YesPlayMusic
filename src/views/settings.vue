@@ -5,7 +5,15 @@
         <div class="left">
           <img class="avatar" :src="data.user.avatarUrl" loading="lazy" />
           <div class="info">
-            <div class="nickname">{{ data.user.nickname }}</div>
+            <div class="nickname">
+              <span>{{ data.user.nickname }}</span>
+              <span
+                v-if="hasListeningRightsRemaining"
+                class="listening-rights-remaining"
+              >
+                {{ listeningRightsRemainingText }}
+              </span>
+            </div>
             <div class="extra-info">
               <span v-if="data.user.vipType !== 0" class="vip"
                 ><img
@@ -137,35 +145,6 @@
             />
             <label for="enable-third-party-source"></label>
           </div>
-        </div>
-      </div>
-      <div v-if="isAccountLoggedIn" class="item">
-        <div class="left">
-          <div class="title">免费听权益</div>
-          <div class="description">
-            <template v-if="listeningRights.loading"
-              >正在查询剩余时长…</template
-            >
-            <template v-else-if="listeningRights.supported === false">
-              当前 API 上游暂不支持此功能
-            </template>
-            <template v-else>
-              剩余时长：{{ listeningRightsRemainingText }}
-              <span v-if="listeningRightsStatusText">
-                （{{ listeningRightsStatusText }}）
-              </span>
-            </template>
-          </div>
-        </div>
-        <div class="right">
-          <button
-            :disabled="
-              listeningRights.claiming || listeningRights.supported === false
-            "
-            @click="claimListeningRights"
-          >
-            {{ listeningRights.claiming ? '领取中…' : '领取权益' }}
-          </button>
         </div>
       </div>
       <div v-if="isElectron" class="item">
@@ -640,12 +619,7 @@
 import { mapState, mapActions } from 'vuex';
 import { isAccountLoggedIn, isLooseLoggedIn, doLogout } from '@/utils/auth';
 import { auth as lastfmAuth } from '@/api/lastfm';
-import {
-  gainListeningRights,
-  getListeningRights,
-  getListeningRightsAd,
-  registerAdCheckToken,
-} from '@/api/others';
+import { getListeningRights } from '@/api/others';
 import { changeAppearance, bytesToSize } from '@/utils/common';
 import { countDBSize, clearDB } from '@/utils/db';
 import pkg from '../../package.json';
@@ -677,13 +651,9 @@ export default {
       recordedShortcut: [],
       listeningRights: {
         loading: false,
-        claiming: false,
         supported: null,
         remainingTime: 0,
         fetchedAt: 0,
-        status: '',
-        coverToday: false,
-        upperLimit: false,
       },
       listeningRightsNow: Date.now(),
       listeningRightsTimer: null,
@@ -691,11 +661,17 @@ export default {
   },
   computed: {
     ...mapState(['player', 'settings', 'data', 'lastfm']),
-    isAccountLoggedIn() {
-      return isAccountLoggedIn();
+    hasListeningRightsRemaining() {
+      if (this.listeningRights.supported !== true) return false;
+      const elapsed = Math.max(
+        0,
+        this.listeningRightsNow - this.listeningRights.fetchedAt
+      );
+      return this.listeningRights.remainingTime - elapsed > 0;
     },
     listeningRightsRemainingText() {
-      if (this.listeningRights.supported === null) return '—';
+      if (!this.hasListeningRightsRemaining) return '';
+
       const elapsed = Math.max(
         0,
         this.listeningRightsNow - this.listeningRights.fetchedAt
@@ -713,11 +689,6 @@ export default {
         .map(value => String(value).padStart(2, '0'))
         .join(':');
       return days > 0 ? `${days} 天 ${clock}` : clock;
-    },
-    listeningRightsStatusText() {
-      if (this.listeningRights.upperLimit) return '已达上限';
-      if (this.listeningRights.coverToday) return '今日已覆盖';
-      return this.listeningRights.status;
     },
     isElectron() {
       return process.env.IS_ELECTRON;
@@ -1113,9 +1084,17 @@ export default {
     this.listeningRightsTimer = setInterval(() => {
       this.listeningRightsNow = Date.now();
     }, 1000);
+    window.addEventListener(
+      'listening-rights-updated',
+      this.handleListeningRightsUpdated
+    );
   },
   beforeDestroy() {
     clearInterval(this.listeningRightsTimer);
+    window.removeEventListener(
+      'listening-rights-updated',
+      this.handleListeningRightsUpdated
+    );
   },
   activated() {
     this.countDBSize('tracks');
@@ -1124,6 +1103,9 @@ export default {
   },
   methods: {
     ...mapActions(['showToast']),
+    handleListeningRightsUpdated() {
+      this.refreshListeningRights({ silent: true });
+    },
     isUnsupportedListeningRightsError(error) {
       return (
         error?.response?.status === 404 ||
@@ -1147,9 +1129,6 @@ export default {
         Number(rights.rightsRemainingTime) || 0
       );
       this.listeningRights.fetchedAt = Date.now();
-      this.listeningRights.status = rights.status || '';
-      this.listeningRights.coverToday = Boolean(rights.rightsCoverToday);
-      this.listeningRights.upperLimit = Boolean(rights.rightsUpperLimit);
     },
     async refreshListeningRights({ silent = false } = {}) {
       if (!isAccountLoggedIn()) return;
@@ -1174,51 +1153,6 @@ export default {
         }
       } finally {
         this.listeningRights.loading = false;
-      }
-    },
-    async claimListeningRights() {
-      if (!isAccountLoggedIn()) {
-        this.showToast('领取权益需要登录网易云账号');
-        return;
-      }
-      if (this.listeningRights.supported === false) {
-        this.showToast('当前 API 上游暂不支持免费听权益');
-        return;
-      }
-
-      this.listeningRights.claiming = true;
-      try {
-        const tokenResult = await registerAdCheckToken();
-        if (!tokenResult?.token) {
-          throw new Error('反作弊 Token 获取失败，请稍后重试');
-        }
-
-        const adResult = await getListeningRightsAd();
-        const reqUid = adResult?.extra?.reqId;
-        if (adResult?.code !== 200 || !reqUid) {
-          throw new Error('未获取到可用广告权益，请稍后重试');
-        }
-
-        const gainResult = await gainListeningRights(reqUid);
-        if (gainResult?.code !== 200) {
-          throw new Error(
-            gainResult?.message || gainResult?.msg || '权益领取失败'
-          );
-        }
-
-        this.showToast('权益领取请求已提交');
-        await this.refreshListeningRights({ silent: true });
-      } catch (error) {
-        if (this.isUnsupportedListeningRightsError(error)) {
-          this.listeningRights.supported = false;
-          this.showToast('当前 API 上游暂不支持免费听权益');
-        } else {
-          this.showToast(
-            this.getListeningRightsErrorMessage(error, '权益领取失败')
-          );
-        }
-      } finally {
-        this.listeningRights.claiming = false;
       }
     },
     getAllOutputDevices() {
@@ -1424,6 +1358,13 @@ h3 {
       font-size: 20px;
       font-weight: 600;
       margin-bottom: 2px;
+    }
+    .listening-rights-remaining {
+      margin-left: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      opacity: 0.68;
+      white-space: nowrap;
     }
     .extra-info {
       font-size: 13px;

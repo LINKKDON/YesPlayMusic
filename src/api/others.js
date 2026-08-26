@@ -96,3 +96,26 @@ export function gainListeningRights(reqUid) {
     },
   });
 }
+
+/**
+ * 执行完整的广告权益领取流程：刷新反作弊 token、获取广告请求 ID、领取权益。
+ */
+export async function claimListeningRights() {
+  const tokenResult = await registerAdCheckToken();
+  if (!tokenResult?.token) {
+    throw new Error('反作弊 Token 获取失败，请稍后重试');
+  }
+
+  const adResult = await getListeningRightsAd();
+  const reqUid = adResult?.extra?.reqId;
+  if (adResult?.code !== 200 || !reqUid) {
+    throw new Error('未获取到可用广告权益，请稍后重试');
+  }
+
+  const gainResult = await gainListeningRights(reqUid);
+  if (gainResult?.code !== 200) {
+    throw new Error(gainResult?.message || gainResult?.msg || '权益领取失败');
+  }
+
+  return gainResult;
+}
