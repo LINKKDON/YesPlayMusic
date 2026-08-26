@@ -57,65 +57,45 @@ export function getListeningRights() {
   return request({
     url: '/ad/listening/rights',
     method: 'get',
-  });
-}
-
-/**
- * 获取广告接口需要的易盾反作弊 token。
- */
-export function registerAdCheckToken() {
-  return request({
-    url: '/register/checktoken/v3',
-    method: 'get',
     params: {
-      refresh: 1,
+      _t: Date.now(),
     },
-  });
-}
-
-/**
- * 获取激励广告，并从 Enhanced API 的响应中读取 reqId。
- */
-export function getListeningRightsAd() {
-  return request({
-    url: '/ad/get',
-    method: 'get',
+    headers: {
+      'Cache-Control': 'no-cache, no-store',
+      Pragma: 'no-cache',
+      'x-apicache-force-fetch': 'true',
+    },
   });
 }
 
 /**
  * 领取广告下发的免费听或其他权益。
- * @param {string} reqUid 广告请求 ID，由 /ad/get 返回。
+ *
+ * 不在前端单独请求 token/广告：Enhanced API 会在服务端实时获取反作弊
+ * token、广告上下文和 reqUid，确保一次领取使用同一组请求数据。
  */
-export function gainListeningRights(reqUid) {
+export function gainListeningRights() {
   return request({
     url: '/ad/listening/rights/gain',
     method: 'get',
     params: {
-      reqUid,
+      _t: Date.now(),
+    },
+    headers: {
+      'Cache-Control': 'no-cache, no-store',
+      Pragma: 'no-cache',
+      'x-apicache-force-fetch': 'true',
     },
   });
 }
 
 /**
- * 执行完整的广告权益领取流程：刷新反作弊 token、获取广告请求 ID、领取权益。
+ * 执行完整的广告权益领取流程。
  */
 export async function claimListeningRights() {
-  const tokenResult = await registerAdCheckToken();
-  if (!tokenResult?.token) {
-    throw new Error('反作弊 Token 获取失败，请稍后重试');
+  const result = await gainListeningRights();
+  if (result?.code !== 200) {
+    throw new Error(result?.message || result?.msg || '权益领取失败');
   }
-
-  const adResult = await getListeningRightsAd();
-  const reqUid = adResult?.extra?.reqId;
-  if (adResult?.code !== 200 || !reqUid) {
-    throw new Error('未获取到可用广告权益，请稍后重试');
-  }
-
-  const gainResult = await gainListeningRights(reqUid);
-  if (gainResult?.code !== 200) {
-    throw new Error(gainResult?.message || gainResult?.msg || '权益领取失败');
-  }
-
-  return gainResult;
+  return result;
 }

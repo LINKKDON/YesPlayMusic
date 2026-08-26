@@ -5,6 +5,7 @@
         <div class="left">
           <img
             class="avatar"
+            :class="{ 'avatar-clicked': avatarClicking }"
             :src="data.user.avatarUrl"
             loading="lazy"
             @click.stop="handleSettingsAvatarClick"
@@ -662,12 +663,18 @@ export default {
         supported: null,
         remainingTime: 0,
         fetchedAt: 0,
+        status: '',
+        coverToday: false,
+        upperLimit: false,
       },
       listeningRightsNow: Date.now(),
       listeningRightsTimer: null,
       settingsAvatarClickCount: 0,
       settingsAvatarClickTimer: null,
       claimingListeningRights: false,
+      lastListeningRightsClaimAt: 0,
+      avatarClicking: false,
+      avatarClickFeedbackTimer: null,
     };
   },
   computed: {
@@ -1103,6 +1110,7 @@ export default {
   beforeDestroy() {
     clearInterval(this.listeningRightsTimer);
     clearTimeout(this.settingsAvatarClickTimer);
+    clearTimeout(this.avatarClickFeedbackTimer);
     window.removeEventListener(
       'listening-rights-updated',
       this.handleListeningRightsUpdated
@@ -1116,6 +1124,16 @@ export default {
   methods: {
     ...mapActions(['showToast']),
     handleSettingsAvatarClick() {
+      this.avatarClicking = false;
+      this.$nextTick(() => {
+        this.avatarClicking = true;
+        clearTimeout(this.avatarClickFeedbackTimer);
+        this.avatarClickFeedbackTimer = setTimeout(() => {
+          this.avatarClicking = false;
+          this.avatarClickFeedbackTimer = null;
+        }, 180);
+      });
+
       this.settingsAvatarClickCount += 1;
       clearTimeout(this.settingsAvatarClickTimer);
       if (this.settingsAvatarClickCount >= 3) {
@@ -1127,19 +1145,114 @@ export default {
       this.settingsAvatarClickTimer = setTimeout(() => {
         this.settingsAvatarClickCount = 0;
         this.settingsAvatarClickTimer = null;
-      }, 500);
+      }, 600);
+    },
+    isListeningRightsGainFailure(result) {
+      const data = this.getListeningRightsPayload(result);
+      if (!data || typeof data !== 'object') return false;
+      if (Number(data.code) && Number(data.code) !== 200) return true;
+      if (data.success === false || data.qualified === false) return true;
+      return [0, '0', false, 'false'].includes(data.gainFlag);
+    },
+    getListeningRightsGainError(result) {
+      const data = this.getListeningRightsPayload(result);
+      return (
+        data.message ||
+        data.msg ||
+        data.errorMsg ||
+        data.errorMessage ||
+        result?.message ||
+        result?.msg ||
+        '权益领取未生效'
+      );
     },
     async claimListeningRights() {
-      if (this.claimingListeningRights) return;
+      if (this.claimingListeningRights) {
+        this.showToast('权益领取正在处理中，请稍候');
+        return;
+      }
       if (!isAccountLoggedIn()) {
         this.showToast('领取权益需要登录网易云账号');
         return;
       }
+
+      // Lock before any asynchronous preflight request. This prevents a second
+      // triple-click from starting another gain request while the first one is
+      // still refreshing the account state.
       this.claimingListeningRights = true;
       try {
-        await requestListeningRights();
-        this.showToast('权益领取请求已提交');
         await this.refreshListeningRights({ silent: true });
+        if (this.listeningRights.supported === false) {
+          this.showToast('当前 API 上游暂不支持免费听权益');
+          return;
+        }
+        if (this.hasListeningRightsRemaining) {
+          this.showToast('当前免费听权益仍有剩余时长');
+          return;
+        }
+        if (
+          this.listeningRights.coverToday ||
+          this.listeningRights.upperLimit
+        ) {
+          this.showToast(
+            this.listeningRights.upperLimit
+              ? '免费听权益已达到领取上限'
+              : '今日免费听权益已领取'
+          );
+          return;
+        }
+
+        const claimCooldown = 30 * 1000;
+        if (Date.now() - this.lastListeningRightsClaimAt < claimCooldown) {
+          this.showToast('权益状态正在同步，请稍后再试');
+          return;
+        }
+        this.lastListeningRightsClaimAt = Date.now();
+        const previousRemainingTime = this.listeningRights.remainingTime;
+        const result = await requestListeningRights();
+        if (result?.code !== 200 || this.isListeningRightsGainFailure(result)) {
+          throw new Error(this.getListeningRightsGainError(result));
+        }
+
+        // The gain endpoint can return code 200 while the upstream body reports
+        // that the user's daily quota is already consumed. Do not call this a
+        // success unless either the body or the rights status confirms it.
+        const directRights = this.getListeningRightsPayload(result);
+        if (
+          Number(directRights.rightsRemainingTime) > previousRemainingTime ||
+          Number(directRights.remainingTime) > previousRemainingTime
+        ) {
+          this.applyListeningRights(result);
+        }
+
+        let refreshed = false;
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          await new Promise(resolve =>
+            setTimeout(resolve, attempt === 0 ? 300 : 900)
+          );
+          await this.refreshListeningRights({ silent: true });
+          if (
+            this.listeningRights.remainingTime > previousRemainingTime ||
+            this.listeningRights.coverToday ||
+            this.listeningRights.upperLimit
+          ) {
+            refreshed = true;
+            break;
+          }
+        }
+
+        if (
+          refreshed &&
+          this.listeningRights.remainingTime > previousRemainingTime
+        ) {
+          this.showToast('免费听权益领取成功');
+        } else if (this.listeningRights.coverToday) {
+          this.showToast('今日免费听权益已领取');
+        } else if (this.listeningRights.upperLimit) {
+          this.showToast('免费听权益已达到领取上限');
+        } else {
+          this.showToast('权益领取未确认生效，请稍后再试');
+        }
       } catch (error) {
         this.showToast(
           this.getListeningRightsErrorMessage(error, '权益领取失败')
@@ -1166,14 +1279,52 @@ export default {
         fallback
       );
     },
+    getListeningRightsPayload(payload) {
+      let current = payload?.data || payload || {};
+      // Some deployments wrap the upstream body one more time as data.data.
+      while (
+        current?.data &&
+        typeof current.data === 'object' &&
+        !Array.isArray(current.data) &&
+        !(
+          'rightsRemainingTime' in current ||
+          'remainingTime' in current ||
+          'rightsEndTime' in current ||
+          'rightsCoverToday' in current
+        )
+      ) {
+        current = current.data;
+      }
+      return current || {};
+    },
+    toBoolean(value) {
+      return [true, 1, '1', 'true', 'TRUE'].includes(value);
+    },
     applyListeningRights(payload) {
-      const rights = payload?.data || {};
-      this.listeningRights.supported = true;
-      this.listeningRights.remainingTime = Math.max(
-        0,
-        Number(rights.rightsRemainingTime) || 0
+      const rights = this.getListeningRightsPayload(payload);
+      const rawRemainingTime = Number(
+        rights.rightsRemainingTime ??
+          rights.remainingTime ??
+          rights.duration ??
+          0
       );
+      const endTime = Date.parse(rights.rightsEndTime || '');
+      const remainingFromEnd = Number.isNaN(endTime)
+        ? 0
+        : Math.max(0, endTime - Date.now());
+      // The demo/API normally returns milliseconds. Support second-based
+      // responses as well, which are used by some older deployments.
+      const remainingTime =
+        rawRemainingTime > 0 && rawRemainingTime < 86400
+          ? rawRemainingTime * 1000
+          : rawRemainingTime || remainingFromEnd;
+
+      this.listeningRights.supported = true;
+      this.listeningRights.remainingTime = Math.max(0, remainingTime);
       this.listeningRights.fetchedAt = Date.now();
+      this.listeningRights.status = rights.status || '';
+      this.listeningRights.coverToday = this.toBoolean(rights.rightsCoverToday);
+      this.listeningRights.upperLimit = this.toBoolean(rights.rightsUpperLimit);
     },
     async refreshListeningRights({ silent = false } = {}) {
       if (!isAccountLoggedIn()) return;
@@ -1388,6 +1539,16 @@ h3 {
     border-radius: 50%;
     height: 64px;
     width: 64px;
+    cursor: pointer;
+    transition: transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease;
+    &:hover {
+      filter: brightness(0.96);
+    }
+    &.avatar-clicked {
+      transform: scale(0.94) translateY(1px);
+      filter: brightness(0.9);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+    }
   }
   img.cvip {
     height: 13px;

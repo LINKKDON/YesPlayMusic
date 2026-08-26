@@ -3,7 +3,9 @@ const axios = require('axios');
 module.exports = async (req, res) => {
   const target = process.env.REAL_API_URL;
   if (!target) {
-    return res.status(500).json({ error: 'Environment variable REAL_API_URL is not set' });
+    return res
+      .status(500)
+      .json({ error: 'Environment variable REAL_API_URL is not set' });
   }
 
   // Get path from query parameter (passed via vercel.json rewrite)
@@ -29,6 +31,19 @@ module.exports = async (req, res) => {
   headers.origin = target;
   headers.referer = target;
 
+  // Free-listen rights are user-specific and can change immediately after a
+  // claim. Never let the upstream apicache serve a stale rights response.
+  const isListeningRightsRequest =
+    urlPath === '/ad/listening/rights' ||
+    urlPath === '/ad/listening/rights/gain';
+  if (isListeningRightsRequest) {
+    headers['cache-control'] = 'no-cache, no-store';
+    headers.pragma = 'no-cache';
+    headers['x-apicache-force-fetch'] = 'true';
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+  }
+
   try {
     const response = await axios({
       url: target + urlPath,
@@ -46,13 +61,19 @@ module.exports = async (req, res) => {
       res.setHeader(key, value);
     });
 
+    if (isListeningRightsRequest) {
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+    }
     res.status(response.status).send(response.data);
   } catch (error) {
     console.error('Proxy Error:', error.message);
     if (error.response) {
       res.status(error.response.status).send(error.response.data);
     } else {
-      res.status(500).json({ error: 'Proxy Request Failed', details: error.message });
+      res
+        .status(500)
+        .json({ error: 'Proxy Request Failed', details: error.message });
     }
   }
 };
