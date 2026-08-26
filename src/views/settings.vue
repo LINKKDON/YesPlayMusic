@@ -139,6 +139,35 @@
           </div>
         </div>
       </div>
+      <div v-if="isAccountLoggedIn" class="item">
+        <div class="left">
+          <div class="title">免费听权益</div>
+          <div class="description">
+            <template v-if="listeningRights.loading"
+              >正在查询剩余时长…</template
+            >
+            <template v-else-if="listeningRights.supported === false">
+              当前 API 上游暂不支持此功能
+            </template>
+            <template v-else>
+              剩余时长：{{ listeningRightsRemainingText }}
+              <span v-if="listeningRightsStatusText">
+                （{{ listeningRightsStatusText }}）
+              </span>
+            </template>
+          </div>
+        </div>
+        <div class="right">
+          <button
+            :disabled="
+              listeningRights.claiming || listeningRights.supported === false
+            "
+            @click="claimListeningRights"
+          >
+            {{ listeningRights.claiming ? '领取中…' : '领取权益' }}
+          </button>
+        </div>
+      </div>
       <div v-if="isElectron" class="item">
         <div class="left">
           <div class="title"> {{ $t('settings.deviceSelector') }} </div>
@@ -609,8 +638,14 @@
 
 <script>
 import { mapState, mapActions } from 'vuex';
-import { isLooseLoggedIn, doLogout } from '@/utils/auth';
+import { isAccountLoggedIn, isLooseLoggedIn, doLogout } from '@/utils/auth';
 import { auth as lastfmAuth } from '@/api/lastfm';
+import {
+  gainListeningRights,
+  getListeningRights,
+  getListeningRightsAd,
+  registerAdCheckToken,
+} from '@/api/others';
 import { changeAppearance, bytesToSize } from '@/utils/common';
 import { countDBSize, clearDB } from '@/utils/db';
 import pkg from '../../package.json';
@@ -640,10 +675,50 @@ export default {
         recording: false,
       },
       recordedShortcut: [],
+      listeningRights: {
+        loading: false,
+        claiming: false,
+        supported: null,
+        remainingTime: 0,
+        fetchedAt: 0,
+        status: '',
+        coverToday: false,
+        upperLimit: false,
+      },
+      listeningRightsNow: Date.now(),
+      listeningRightsTimer: null,
     };
   },
   computed: {
     ...mapState(['player', 'settings', 'data', 'lastfm']),
+    isAccountLoggedIn() {
+      return isAccountLoggedIn();
+    },
+    listeningRightsRemainingText() {
+      if (this.listeningRights.supported === null) return '—';
+      const elapsed = Math.max(
+        0,
+        this.listeningRightsNow - this.listeningRights.fetchedAt
+      );
+      const remaining = Math.max(
+        0,
+        this.listeningRights.remainingTime - elapsed
+      );
+      const totalSeconds = Math.floor(remaining / 1000);
+      const days = Math.floor(totalSeconds / 86400);
+      const hours = Math.floor((totalSeconds % 86400) / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      const clock = [hours, minutes, seconds]
+        .map(value => String(value).padStart(2, '0'))
+        .join(':');
+      return days > 0 ? `${days} 天 ${clock}` : clock;
+    },
+    listeningRightsStatusText() {
+      if (this.listeningRights.upperLimit) return '已达上限';
+      if (this.listeningRights.coverToday) return '今日已覆盖';
+      return this.listeningRights.status;
+    },
     isElectron() {
       return process.env.IS_ELECTRON;
     },
@@ -1034,13 +1109,118 @@ export default {
   created() {
     this.countDBSize('tracks');
     if (process.env.IS_ELECTRON) this.getAllOutputDevices();
+    if (isAccountLoggedIn()) this.refreshListeningRights();
+    this.listeningRightsTimer = setInterval(() => {
+      this.listeningRightsNow = Date.now();
+    }, 1000);
+  },
+  beforeDestroy() {
+    clearInterval(this.listeningRightsTimer);
   },
   activated() {
     this.countDBSize('tracks');
     if (process.env.IS_ELECTRON) this.getAllOutputDevices();
+    if (isAccountLoggedIn()) this.refreshListeningRights();
   },
   methods: {
     ...mapActions(['showToast']),
+    isUnsupportedListeningRightsError(error) {
+      return (
+        error?.response?.status === 404 ||
+        error?.response?.data?.code === 404 ||
+        error?.code === 404
+      );
+    },
+    getListeningRightsErrorMessage(error, fallback) {
+      return (
+        error?.response?.data?.message ||
+        error?.response?.data?.msg ||
+        error?.message ||
+        fallback
+      );
+    },
+    applyListeningRights(payload) {
+      const rights = payload?.data || {};
+      this.listeningRights.supported = true;
+      this.listeningRights.remainingTime = Math.max(
+        0,
+        Number(rights.rightsRemainingTime) || 0
+      );
+      this.listeningRights.fetchedAt = Date.now();
+      this.listeningRights.status = rights.status || '';
+      this.listeningRights.coverToday = Boolean(rights.rightsCoverToday);
+      this.listeningRights.upperLimit = Boolean(rights.rightsUpperLimit);
+    },
+    async refreshListeningRights({ silent = false } = {}) {
+      if (!isAccountLoggedIn()) return;
+      this.listeningRights.loading = true;
+      try {
+        const result = await getListeningRights();
+        if (result?.code !== 200 || !result?.data) {
+          if (result?.code === 404) {
+            this.listeningRights.supported = false;
+            return;
+          }
+          throw new Error(result?.message || result?.msg || '权益状态查询失败');
+        }
+        this.applyListeningRights(result);
+      } catch (error) {
+        if (this.isUnsupportedListeningRightsError(error)) {
+          this.listeningRights.supported = false;
+        } else if (!silent) {
+          this.showToast(
+            this.getListeningRightsErrorMessage(error, '权益状态查询失败')
+          );
+        }
+      } finally {
+        this.listeningRights.loading = false;
+      }
+    },
+    async claimListeningRights() {
+      if (!isAccountLoggedIn()) {
+        this.showToast('领取权益需要登录网易云账号');
+        return;
+      }
+      if (this.listeningRights.supported === false) {
+        this.showToast('当前 API 上游暂不支持免费听权益');
+        return;
+      }
+
+      this.listeningRights.claiming = true;
+      try {
+        const tokenResult = await registerAdCheckToken();
+        if (!tokenResult?.token) {
+          throw new Error('反作弊 Token 获取失败，请稍后重试');
+        }
+
+        const adResult = await getListeningRightsAd();
+        const reqUid = adResult?.extra?.reqId;
+        if (adResult?.code !== 200 || !reqUid) {
+          throw new Error('未获取到可用广告权益，请稍后重试');
+        }
+
+        const gainResult = await gainListeningRights(reqUid);
+        if (gainResult?.code !== 200) {
+          throw new Error(
+            gainResult?.message || gainResult?.msg || '权益领取失败'
+          );
+        }
+
+        this.showToast('权益领取请求已提交');
+        await this.refreshListeningRights({ silent: true });
+      } catch (error) {
+        if (this.isUnsupportedListeningRightsError(error)) {
+          this.listeningRights.supported = false;
+          this.showToast('当前 API 上游暂不支持免费听权益');
+        } else {
+          this.showToast(
+            this.getListeningRightsErrorMessage(error, '权益领取失败')
+          );
+        }
+      } finally {
+        this.listeningRights.claiming = false;
+      }
+    },
     getAllOutputDevices() {
       navigator.mediaDevices.enumerateDevices().then(devices => {
         this.allOutputDevices = devices.filter(device => {

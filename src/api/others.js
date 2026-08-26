@@ -48,3 +48,51 @@ export function fmTrash(id) {
     },
   });
 }
+
+/**
+ * 获取广告激励免费听权益状态。
+ * 当前 API 上游未实现该端点时，调用方应将 404 视为能力不可用。
+ */
+export function getListeningRights() {
+  return request({
+    url: '/ad/listening/rights',
+    method: 'get',
+  });
+}
+
+/**
+ * 获取广告接口需要的易盾反作弊 token。
+ */
+export function registerAdCheckToken() {
+  return request({
+    url: '/register/checktoken/v3',
+    method: 'get',
+    params: {
+      refresh: 1,
+    },
+  });
+}
+
+/**
+ * 获取激励广告，并从 Enhanced API 的响应中读取 reqId。
+ */
+export function getListeningRightsAd() {
+  return request({
+    url: '/ad/get',
+    method: 'get',
+  });
+}
+
+/**
+ * 领取广告下发的免费听或其他权益。
+ * @param {string} reqUid 广告请求 ID，由 /ad/get 返回。
+ */
+export function gainListeningRights(reqUid) {
+  return request({
+    url: '/ad/listening/rights/gain',
+    method: 'get',
+    params: {
+      reqUid,
+    },
+  });
+}
